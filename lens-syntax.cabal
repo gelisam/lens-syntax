@@ -1,0 +1,36 @@
+cabal-version:      1.24
+name:               lens-syntax
+version:            0.1.0.0
+synopsis:           Pointful syntax for optic compositions
+-- description:
+homepage:           https://github.com/gelisam/lens-syntax
+license:            PublicDomain
+license-file:       LICENSE
+author:             Samuel Gélineau
+maintainer:         gelisam+github@gmail.com
+-- copyright:
+category:           Lenses
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+-- extra-source-files:
+
+library
+    exposed-modules:  Control.Lens.Syntax
+    -- other-modules:
+    -- other-extensions:
+    build-depends:    base >=4.17 && <4.18
+    hs-source-dirs:   src
+    default-language: Haskell2010
+    ghc-options: -W -Wall
+
+test-suite lens-syntax-test
+    default-language: Haskell2010
+    -- other-modules:
+    -- other-extensions:
+    type:             exitcode-stdio-1.0
+    hs-source-dirs:   test
+    main-is:          Main.hs
+    build-depends:
+        base >=4.17 && <4.18,
+        lens-syntax
+    ghc-options: -W -Wall
