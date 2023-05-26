@@ -46,23 +46,29 @@ over :: ExpQ -> ExpQ
 over listCompQ = do
   listCompQ >>= \case
     CompE stmts -> do
-      (input, setter, f) <- goInput stmts
+      (input, setter, f) <- go stmts
       [| Lens.over $(pure setter) $(pure f) $(pure input) |]
     _ -> fail "over: expected a list comprehension"
   where
-    goInput :: [Stmt] -> Q (Exp, Exp, Exp)
-    goInput (BindS (VarP boundName) (AppE setter0 input) : stmts) = do
-      (setter1Z, f) <- goSetter boundName stmts
+    go :: [Stmt] -> Q (Exp, Exp, Exp)
+    go (BindS (VarP boundName) (AppE setter0 input) : stmts) = do
+      (setter1Z, f) <- goSetterF boundName stmts
       setter <- [| $(pure setter0) . $(pure setter1Z) |]
       pure (input, setter, f)
+    go (_ : _) = do
+      fail "over: expected each step in the list comprehension to be a (<-)"
+    go [] = do
+      error "impossible: CompE always ends with a NoBindS"
 
-    goSetter :: Name -> [Stmt] -> Q (Exp, Exp)
-    goSetter expectedInput (BindS (VarP boundName) (AppE setter1 (VarE actualInput)) : stmts)
+    goSetterF :: Name -> [Stmt] -> Q (Exp, Exp)
+    goSetterF expectedInput (BindS (VarP boundName) (AppE setter1 (VarE actualInput)) : stmts)
       | expectedInput == actualInput = do
-          (setter2Z, f) <- goSetter boundName stmts
+          (setter2Z, f) <- goSetterF boundName stmts
           setter <- [| $(pure setter1) . $(pure setter2Z) |]
           pure (setter, f)
-    goSetter inputVar (NoBindS fBody : []) = do
+    goSetterF inputVar (NoBindS fBody : []) = do
       f <- [| \ $(varP inputVar) -> $(pure fBody) |]
       setter <- [| id |]
       pure (setter, f)
+    goSetterF [] = do
+      error "impossible: CompE always ends with a NoBindS"
