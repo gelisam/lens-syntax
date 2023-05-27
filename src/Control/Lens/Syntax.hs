@@ -41,12 +41,12 @@ import Language.Haskell.TH
 import qualified Control.Lens as Lens
 
 
-over :: ExpQ -> ExpQ
-over listCompQ = do
+opticAction :: ExpQ -> ExpQ -> ExpQ
+opticAction actionQ listCompQ = do
   listCompQ >>= \case
     CompE stmts -> do
       (input, setter, f) <- go stmts
-      [| Lens.over $(pure setter) $(pure f) $(pure input) |]
+      [| $(actionQ) $(pure setter) $(pure f) $(pure input) |]
     _ -> fail "over: expected a list comprehension"
   where
     go :: [Stmt] -> Q (Exp, Exp, Exp)
@@ -91,3 +91,9 @@ over listCompQ = do
       fail "over: all steps in the list comprehension must be a (<-)"
     goSetterF _ [] = do
       error "impossible: CompE always ends with a NoBindS"
+
+over :: ExpQ -> ExpQ
+over = opticAction [| Lens.over |]
+
+traverseOf :: ExpQ -> ExpQ
+traverseOf = opticAction [| Lens.traverseOf |]
