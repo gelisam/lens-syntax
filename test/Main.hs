@@ -7,7 +7,7 @@ import Data.Char (toUpper)
 import Data.Foldable (sequenceA_)
 import Test.DocTest
 
-import Control.Lens.Syntax as Syntax
+import qualified Control.Lens.Syntax as Syntax
 
 
 main :: IO ()
@@ -69,26 +69,24 @@ strings =
 upperStrings :: [Maybe (Int, String)]
 upperStrings
     = $(Syntax.over [| [ toUpper c
-                       | maybePair <- each example2
-                       , pair <- _Just maybePair
-                       , s <- _2 pair
+                       | Just (_, s) <- each example2
                        , c <- each s
                        ] |])
 
 
--- | For 'traverseOf', this library has your back!
---
--- >>> runState rotateInts 0
--- ([Just (0,"abc"),Nothing,Just (1,"def")],2)
-rotateInts :: State Int [Maybe (Int, String)]
-rotateInts
-    = $(Syntax.traverseOf [| [ do prev <- get
-                                  put this
-                                  pure prev
-                             | maybePair <- each example2
-                             , pair <- _Just maybePair
-                             , this <- _1 pair
-                             ] |])
+---- | For 'traverseOf', this library has your back!
+----
+---- >>> runState rotateInts 0
+---- ([Just (0,"abc"),Nothing,Just (1,"def")],2)
+--rotateInts :: State Int [Maybe (Int, String)]
+--rotateInts
+--    = $(Syntax.traverseOf [| [ do prev <- get
+--                                  put this
+--                                  pure prev
+--                             | maybePair <- each example2
+--                             , pair <- _Just maybePair
+--                             , this <- _1 pair
+--                             ] |])
 
 -- | For 'sequenceOf_', don't use this library, use 'sequenceA_' and list
 -- comprehensions.
