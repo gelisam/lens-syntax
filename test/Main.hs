@@ -74,19 +74,19 @@ upperStrings
                        ] |])
 
 
----- | For 'traverseOf', this library has your back!
-----
----- >>> runState rotateInts 0
----- ([Just (0,"abc"),Nothing,Just (1,"def")],2)
---rotateInts :: State Int [Maybe (Int, String)]
---rotateInts
---    = $(Syntax.traverseOf [| [ do prev <- get
---                                  put this
---                                  pure prev
---                             | maybePair <- each example2
---                             , pair <- _Just maybePair
---                             , this <- _1 pair
---                             ] |])
+-- | For 'traverseOf', this library has your back!
+--
+-- >>> runState rotateInts 0
+-- ([Just (0,"abc"),Nothing,Just (1,"def")],2)
+rotateInts :: State Int [Maybe (Int, String)]
+rotateInts
+    = $(Syntax.traverseOf [| [ do prev <- get
+                                  put this
+                                  pure prev
+                             | maybePair <- each example2
+                             , pair <- _Just maybePair
+                             , this <- _1 pair
+                             ] |])
 
 -- | For 'sequenceOf_', don't use this library, use 'sequenceA_' and list
 -- comprehensions.
