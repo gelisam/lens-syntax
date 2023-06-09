@@ -32,6 +32,9 @@ example2 = [Just (1, "abc"), Nothing, Just (2, "def")]
 
 -- | For 'view', don't use this library, use let bindings.
 --
+-- >>> view (_2 . _Identity . name) example1
+-- "Alice"
+--
 -- >>> personName
 -- "Alice"
 personName :: String
@@ -42,6 +45,9 @@ personName =
 
 -- | For 'preview', don't use this library, use the 'Maybe' monad.
 --
+-- >>> preview (each . _Just . _2) example2
+-- Just "abc"
+--
 -- >>> firstString
 -- Just "abc"
 firstString :: Maybe String
@@ -51,6 +57,9 @@ firstString = do
   pair ^? _2
 
 -- | For 'toListOf', don't use this library, use list comprehensions.
+--
+-- >>> toListOf (each . _Just . _2) example2
+-- ["abc","def"]
 --
 -- >>> strings
 -- ["abc","def"]
@@ -64,6 +73,9 @@ strings =
 
 -- | For 'over', this library has your back!
 --
+-- >>> over (each . _Just . _2 . each) toUpper example2
+-- [Just (1,"ABC"),Nothing,Just (2,"DEF")]
+--
 -- >>> upperStrings
 -- [Just (1,"ABC"),Nothing,Just (2,"DEF")]
 upperStrings :: [Maybe (Int, String)]
@@ -76,20 +88,32 @@ upperStrings
 
 -- | For 'traverseOf', this library has your back!
 --
--- >>> runState rotateInts 0
+-- >>> flip runState 0 $ traverseOf (each . _Just . _1) rotateS example2
+-- ([Just (0,"abc"),Nothing,Just (1,"def")],2)
+--
+-- >>> flip runState 0 $ rotateInts
 -- ([Just (0,"abc"),Nothing,Just (1,"def")],2)
 rotateInts :: State Int [Maybe (Int, String)]
 rotateInts
-    = $(Syntax.traverseOf [| [ do prev <- get
-                                  put this
-                                  pure prev
+    = $(Syntax.traverseOf [| [ rotateS this
                              | maybePair <- each example2
                              , pair <- _Just maybePair
                              , this <- _1 pair
                              ] |])
 
--- | For 'sequenceOf_', don't use this library, use 'sequenceA_' and list
+rotateS :: Int -> State Int Int
+rotateS this = do
+  prev <- get
+  put this
+  pure prev
+
+
+-- | For 'traverseOf_', don't use this library, use 'sequenceA_' and list
 -- comprehensions.
+--
+-- >>> traverseOf_ (folded . _Just . _2) putStrLn example2
+-- abc
+-- def
 --
 -- >>> printStrings
 -- abc
