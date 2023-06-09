@@ -49,6 +49,128 @@ import Language.Haskell.TH
 import qualified Control.Lens as Lens
 
 
+-- Convert a pattern to an expression. The values bound by variable names in the
+-- pattern are intended to be transformed before being used to reconstruct the
+-- expression, so those variables are given a new name in the expression. Thus,
+-- a variable-mapping table is also returned.
+--
+-- The parts of the pattern which are not named are expected to be left
+-- unchanged when reconstructing the expression, but in order to do that, the
+-- pattern does need to bind those values to names. Thus, a new pattern
+-- containing names is also returned.
+--
+-- >> patternToExp (Just (_, _))
+-- ([], Just (x, y), Just (x, y))
+-- >> patternToExp (Just (_, a))
+-- ([(a,b)], Just (x, a), Just (x, b))
+patternToExp :: Pat -> Q ([(Name, Name)], Pat, Exp)
+patternToExp = \case
+  LitP lit -> do
+    -- { 5 or 'c' }
+    pure ([], LitP lit, LitE lit)
+  VarP a -> do
+    -- { a }
+    b <- newName "b"
+    pure ([(a,b)], VarP a, VarE b)
+  TupP pats -> do
+    -- { (p1,p2) }
+    varMapAndPatAndExps' <- traverse patternToExp pats
+    let varMap' = Lens.foldOf (Lens.each . Lens._1) varMapAndPatAndExps'
+    let pats' = fmap (Lens.view Lens._2) varMapAndPatAndExps'
+    let exps' = fmap (Lens.view Lens._3) varMapAndPatAndExps'
+    pure (varMap', TupP pats', TupE (fmap Just exps'))
+  UnboxedTupP pats -> do
+    -- { (# p1,p2 #) }
+    varMapAndPatAndExps' <- traverse patternToExp pats
+    let varMap' = Lens.foldOf (Lens.each . Lens._1) varMapAndPatAndExps'
+    let pats' = fmap (Lens.view Lens._2) varMapAndPatAndExps'
+    let exps' = fmap (Lens.view Lens._3) varMapAndPatAndExps'
+    pure (varMap', UnboxedTupP pats', UnboxedTupE (fmap Just exps'))
+  UnboxedSumP pat sumAlt sumArity -> do
+    -- { (#|p|#) }
+    (varMap', pat', exp') <- patternToExp pat
+    pure ( varMap'
+          , UnboxedSumP pat' sumAlt sumArity
+          , UnboxedSumE exp' sumAlt sumArity
+          )
+#if MIN_VERSION_template_haskell(2,18,0)
+  ConP name types pats -> do
+    -- data T1 = C1 t1 t2; {C1 @ty1 p1 p2} = e
+    varMapAndPatAndExps' <- traverse patternToExp pats
+    let varMaps' = Lens.toListOf (Lens.each . Lens._1) varMapAndPatAndExps'
+    let pats' = fmap (Lens.view Lens._2) varMapAndPatAndExps'
+    let exps' = fmap (Lens.view Lens._3) varMapAndPatAndExps'
+    pure (concat varMaps', ConP name types pats', foldl' AppE (ConE name) exps')
+#else
+  ConP name pats -> do
+    -- data T1 = C1 t1 t2; {C1 p1 p2} = e
+    varMapAndPatAndExps' <- traverse patternToExp pats
+    let varMap' = Lens.foldOf (Lens.each . Lens._1) varMapAndPatAndExps'
+    let pats' = fmap (Lens.view Lens._2) varMapAndPatAndExps'
+    let exps' = fmap (Lens.view Lens._3) varMapAndPatAndExps'
+    pure (varMap', ConP name pats', foldl' AppE (ConE name) exps')
+#endif
+  InfixP pat1 name pat2 -> do
+    -- foo ({x :+: y})
+    (varMap1, pat1', exp1') <- patternToExp pat1
+    (varMap2, pat2', exp2') <- patternToExp pat2
+    pure ( varMap1 ++ varMap2
+          , InfixP pat1' name pat2'
+          , InfixE (Just exp1') (ConE name) (Just exp2')
+          )
+  UInfixP pat1 name pat2 -> do
+    -- foo ({x :+: y})
+    (varMap1, pat1', exp1') <- patternToExp pat1
+    (varMap2, pat2', exp2') <- patternToExp pat2
+    pure ( varMap1 ++ varMap2
+          , UInfixP pat1' name pat2'
+          , UInfixE exp1' (ConE name) exp2'
+          )
+  ParensP pat -> do
+    -- { (p) }
+    (varMap', pat', exp') <- patternToExp pat
+    pure (varMap', ParensP pat', exp')
+  TildeP pat -> do
+    -- { ~p }
+    (varMap', pat', exp') <- patternToExp pat
+    pure (varMap', TildeP pat', exp')
+  BangP pat -> do
+    -- { !p }
+    (varMap', pat', exp') <- patternToExp pat
+    pure (varMap', BangP pat', exp')
+  AsP name pat -> do
+    -- { x@p }
+    -- TODO: this name should be saved as part of the index
+    (varMap', pat', exp') <- patternToExp pat
+    pure (varMap', AsP name pat', exp')
+  WildP -> do
+    -- { _ }
+    -- replace with a named variable so we can reconstruct the value
+    name <- newName "x"
+    pure ([], VarP name, VarE name)
+  RecP name fieldPats -> do
+    -- { Point { pointx = x, pointy = y } }
+    r :: [(Name, ([(Name, Name)], Pat, Exp))]
+      <- Lens.traverseOf (Lens.each . Lens._2) patternToExp fieldPats
+    let varMap' = Lens.foldOf (Lens.each . Lens._2 . Lens._1) r
+    let fieldPats' = Lens.over (Lens.each . Lens._2) (Lens.view Lens._2) r
+    let fieldExps' = Lens.over (Lens.each . Lens._2) (Lens.view Lens._3) r
+    pure (varMap', RecP name fieldPats', RecConE name fieldExps')
+  ListP pats -> do
+    -- { [p1,p2] }
+    varMapAndPatAndExps' <- traverse patternToExp pats
+    let varMap' = Lens.foldOf (Lens.each . Lens._1) varMapAndPatAndExps'
+    let pats' = fmap (Lens.view Lens._2) varMapAndPatAndExps'
+    let exps' = fmap (Lens.view Lens._3) varMapAndPatAndExps'
+    pure (varMap', ListP pats', ListE exps')
+  SigP pat typ -> do
+    -- { (p :: t) }
+    (varMap', pat', exp') <- patternToExp pat
+    pure (varMap', SigP pat' typ, SigE exp' typ)
+  ViewP {} -> do
+    -- { (e -> p) }
+    fail "lens-syntax: view patterns are not allowed because it is not possible to invert the function in order to get the other direction of the lens. Try to express the function as a Lens?"
+
 -- >> patternToTraversal (Just (_, a))
 -- traversal (\f s -> case s of
 --             Just (x, a) -> (\b -> Just (x, b)) <$> f a
@@ -73,7 +195,7 @@ import qualified Control.Lens as Lens
 patternToTraversal :: Pat -> ExpQ
 patternToTraversal patWithUnderscores
   = [| Lens.traversal $ \f s -> $(do
-         go patWithUnderscores >>= \case
+         patternToExp patWithUnderscores >>= \case
            ([(a,b)], patWithNames, body) -> do
              let expA = VarE a
              let patB = VarP b
@@ -83,118 +205,6 @@ patternToTraversal patWithUnderscores
                |]
            _ -> do
              fail "lens-syntax: every pattern must bind exactly one variable") |]
-  where
-    -- >> go (Just (_, _))
-    -- ([], Just (x, y), Just (x, y))
-    -- >> go (Just (_, a))
-    -- ([(a,b)], Just (x, a), Just (x, b))
-    go :: Pat -> Q ([(Name, Name)], Pat, Exp)
-    go = \case
-      LitP lit -> do
-        -- { 5 or 'c' }
-        pure ([], LitP lit, LitE lit)
-      VarP a -> do
-        -- { a }
-        b <- newName "b"
-        pure ([(a,b)], VarP a, VarE b)
-      TupP pats -> do
-        -- { (p1,p2) }
-        varMapAndPatAndExps' <- traverse go pats
-        let varMap' = Lens.foldOf (Lens.each . Lens._1) varMapAndPatAndExps'
-        let pats' = fmap (Lens.view Lens._2) varMapAndPatAndExps'
-        let exps' = fmap (Lens.view Lens._3) varMapAndPatAndExps'
-        pure (varMap', TupP pats', TupE (fmap Just exps'))
-      UnboxedTupP pats -> do
-        -- { (# p1,p2 #) }
-        varMapAndPatAndExps' <- traverse go pats
-        let varMap' = Lens.foldOf (Lens.each . Lens._1) varMapAndPatAndExps'
-        let pats' = fmap (Lens.view Lens._2) varMapAndPatAndExps'
-        let exps' = fmap (Lens.view Lens._3) varMapAndPatAndExps'
-        pure (varMap', UnboxedTupP pats', UnboxedTupE (fmap Just exps'))
-      UnboxedSumP pat sumAlt sumArity -> do
-        -- { (#|p|#) }
-        (varMap', pat', exp') <- go pat
-        pure ( varMap'
-             , UnboxedSumP pat' sumAlt sumArity
-             , UnboxedSumE exp' sumAlt sumArity
-             )
-#if MIN_VERSION_template_haskell(2,18,0)
-      ConP name types pats -> do
-        -- data T1 = C1 t1 t2; {C1 @ty1 p1 p2} = e
-        varMapAndPatAndExps' <- traverse go pats
-        let varMaps' = Lens.toListOf (Lens.each . Lens._1) varMapAndPatAndExps'
-        let pats' = fmap (Lens.view Lens._2) varMapAndPatAndExps'
-        let exps' = fmap (Lens.view Lens._3) varMapAndPatAndExps'
-        pure (concat varMaps', ConP name types pats', foldl' AppE (ConE name) exps')
-#else
-      ConP name pats -> do
-        -- data T1 = C1 t1 t2; {C1 p1 p2} = e
-        varMapAndPatAndExps' <- traverse go pats
-        let varMap' = Lens.foldOf (Lens.each . Lens._1) varMapAndPatAndExps'
-        let pats' = fmap (Lens.view Lens._2) varMapAndPatAndExps'
-        let exps' = fmap (Lens.view Lens._3) varMapAndPatAndExps'
-        pure (varMap', ConP name pats', foldl' AppE (ConE name) exps')
-#endif
-      InfixP pat1 name pat2 -> do
-        -- foo ({x :+: y})
-        (varMap1, pat1', exp1') <- go pat1
-        (varMap2, pat2', exp2') <- go pat2
-        pure ( varMap1 ++ varMap2
-             , InfixP pat1' name pat2'
-             , InfixE (Just exp1') (ConE name) (Just exp2')
-             )
-      UInfixP pat1 name pat2 -> do
-        -- foo ({x :+: y})
-        (varMap1, pat1', exp1') <- go pat1
-        (varMap2, pat2', exp2') <- go pat2
-        pure ( varMap1 ++ varMap2
-             , UInfixP pat1' name pat2'
-             , UInfixE exp1' (ConE name) exp2'
-             )
-      ParensP pat -> do
-        -- { (p) }
-        (varMap', pat', exp') <- go pat
-        pure (varMap', ParensP pat', exp')
-      TildeP pat -> do
-        -- { ~p }
-        (varMap', pat', exp') <- go pat
-        pure (varMap', TildeP pat', exp')
-      BangP pat -> do
-        -- { !p }
-        (varMap', pat', exp') <- go pat
-        pure (varMap', BangP pat', exp')
-      AsP name pat -> do
-        -- { x@p }
-        -- TODO: this name should be saved as part of the index
-        (varMap', pat', exp') <- go pat
-        pure (varMap', AsP name pat', exp')
-      WildP -> do
-        -- { _ }
-        -- replace with a named variable so we can reconstruct the value
-        name <- newName "x"
-        pure ([], VarP name, VarE name)
-      RecP name fieldPats -> do
-        -- { Point { pointx = x, pointy = y } }
-        r :: [(Name, ([(Name, Name)], Pat, Exp))]
-          <- Lens.traverseOf (Lens.each . Lens._2) go fieldPats
-        let varMap' = Lens.foldOf (Lens.each . Lens._2 . Lens._1) r
-        let fieldPats' = Lens.over (Lens.each . Lens._2) (Lens.view Lens._2) r
-        let fieldExps' = Lens.over (Lens.each . Lens._2) (Lens.view Lens._3) r
-        pure (varMap', RecP name fieldPats', RecConE name fieldExps')
-      ListP pats -> do
-        -- { [p1,p2] }
-        varMapAndPatAndExps' <- traverse go pats
-        let varMap' = Lens.foldOf (Lens.each . Lens._1) varMapAndPatAndExps'
-        let pats' = fmap (Lens.view Lens._2) varMapAndPatAndExps'
-        let exps' = fmap (Lens.view Lens._3) varMapAndPatAndExps'
-        pure (varMap', ListP pats', ListE exps')
-      SigP pat typ -> do
-        -- { (p :: t) }
-        (varMap', pat', exp') <- go pat
-        pure (varMap', SigP pat' typ, SigE exp' typ)
-      ViewP {} -> do
-        -- { (e -> p) }
-        fail "lens-syntax: view patterns are not allowed because it is not possible to invert the function in order to get the other direction of the lens. Try to express the function as a Lens?"
 
 patternVars :: Pat -> [Name]
 patternVars = \case
